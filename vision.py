@@ -37,6 +37,11 @@ async def analyze_car_photo(photo_bytes):
 
         response = data.get("responses", [{}])[0]
         car_number = extract_plate(response)
+# debug - რა ტექსტი ამოიცნო
+texts = response.get("textAnnotations", [])
+debug_text = texts[0].get("description", "ტექსტი ვერ მოიძებნა") if texts else "ტექსტი ვერ მოიძებნა"
+print(f"DEBUG Vision text: {debug_text[:200]}")
+print(f"DEBUG car_number: {car_number}")
         car_info = extract_car_info(response)
         return car_number, car_info
 
