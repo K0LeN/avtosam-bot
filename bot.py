@@ -92,13 +92,13 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚙️ ადმინ პანელი:", reply_markup=make_keyboard(actions, cols=1))
         return WAIT_ADMIN_ACTION
 
-async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+ async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
     context.user_data.clear()
     context.user_data["photo_id"] = update.message.photo[-1].file_id
     context.user_data["mode"] = "service"
-    await update.message.reply_text("⏳ ფოტოს ვამუშავებ...", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("⏳ ფოტოს ვამუშავებ...")
     photo_file = await update.message.photo[-1].get_file()
     photo_bytes = await photo_file.download_as_bytearray()
     car_number, car_info = await analyze_car_photo(photo_bytes)
@@ -110,10 +110,20 @@ async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if car_info:
             msg += f"🚗 {car_info}\n"
         msg += "\nსწორია?"
-        await update.message.reply_text(msg, reply_markup=make_keyboard(["✅ სწორია", "✏️ ხელით შევიყვანე"], cols=1))
+        await update.message.reply_text(
+            msg,
+            reply_markup=ReplyKeyboardMarkup(
+                [["✅ სწორია"], ["✏️ ხელით შევიყვანე"], ["❌ გაუქმება"]],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+        )
         return WAIT_CONFIRM_NUMBER
     else:
-        await update.message.reply_text("🚗 ნომერი ვერ ამოვიცანი.\n\nხელით შეიყვანე:", reply_markup=make_keyboard([], cancel=True))
+        await update.message.reply_text(
+            "🚗 ნომერი ვერ ამოვიცანი.\n\nხელით შეიყვანე:",
+            reply_markup=make_keyboard([], cancel=True)
+        )
         return WAIT_CAR_NUMBER
 
 async def got_confirm_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
