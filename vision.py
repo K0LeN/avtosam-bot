@@ -43,7 +43,7 @@ async def analyze_car_photo(photo_bytes):
                     {"inline_data": {"mime_type": "image/jpeg", "data": image_b64}}
                 ]
             }],
-            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 200}
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 500}
         }
         
         async with aiohttp.ClientSession() as session:
