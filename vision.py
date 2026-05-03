@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import re
 import aiohttp
 
 async def analyze_car_photo(photo_bytes):
@@ -17,13 +18,12 @@ async def analyze_car_photo(photo_bytes):
         token = creds.token
 
         image_b64 = base64.b64encode(photo_bytes).decode("utf-8")
-
         url = "https://vision.googleapis.com/v1/images:annotate"
         payload = {
             "requests": [{
                 "image": {"content": image_b64},
                 "features": [
-                    {"type": "TEXT_DETECTION", "maxResults": 10},
+                    {"type": "TEXT_DETECTION", "maxResults": 20},
                     {"type": "OBJECT_LOCALIZATION", "maxResults": 5},
                     {"type": "LABEL_DETECTION", "maxResults": 10}
                 ]
@@ -44,39 +44,38 @@ async def analyze_car_photo(photo_bytes):
         return None, None
 
 def extract_plate(response):
-    import re
     texts = response.get("textAnnotations", [])
     if not texts:
         return None
     
-    all_text = " ".join(t.get("description", "") for t in texts)
-    tokens = re.findall(r'[A-Z0-9]{2,10}', all_text.upper())
+    all_text = " ".join(t.get("description", "") for t in texts).upper()
     
     patterns = [
-        r'^\d{4}[A-Z]{2}$',
-        r'^[A-Z]{2}\d{4}$',
-        r'^[A-Z]{2}\d{3}[A-Z]{2}$',
-        r'^[A-Z]{2}-\d{3}-[A-Z]{2}$',
-        r'^\d{2}[A-Z]{2}\d{3}$',
-        r'^\d{3}[A-Z]{2}\d{2}$',
-        r'^[A-Z]{2}\d{2}[A-Z]{2}$',
-        r'^[A-Z0-9]{5,8}$',
+        r'[A-Z]{2}-\d{3}-[A-Z]{2}',
+        r'[A-Z]{2}\d{3}[A-Z]{2}',
+        r'\d{4}\s*[A-Z]{2}',
+        r'[A-Z]{2}\s*\d{4}',
+        r'[A-Z]{2}\s*\d{3}\s*[A-Z]{2}',
     ]
     
-    for token in tokens:
-        token = token.strip(".,!?()[]- ")
-        for pattern in patterns:
-            if re.match(pattern, token) and len(token) >= 5:
-                return token
+    for pattern in patterns:
+        match = re.search(pattern, all_text)
+        if match:
+            result = re.sub(r'\s+', '', match.group())
+            if re.match(r'[A-Z]{2}\d{3}[A-Z]{2}', result):
+                return f"{result[:2]}-{result[2:5]}-{result[5:]}"
+            return result
     return None
 
 def extract_car_info(response):
-    car_brands = ["BMW", "MERCEDES", "TOYOTA", "LEXUS", "HONDA", "HYUNDAI",
-                  "KIA", "FORD", "VOLKSWAGEN", "AUDI", "NISSAN", "MAZDA",
-                  "MITSUBISHI", "SUBARU", "CHEVROLET", "OPEL", "PEUGEOT",
-                  "RENAULT", "VOLVO", "PORSCHE", "LAND ROVER", "JEEP",
-                  "INFINITI", "ACURA", "CADILLAC", "LINCOLN", "BUICK",
-                  "CHRYSLER", "DODGE", "TESLA", "RIVIAN", "GENESIS"]
+    car_brands = [
+        "BMW", "MERCEDES", "TOYOTA", "LEXUS", "HONDA", "HYUNDAI",
+        "KIA", "FORD", "VOLKSWAGEN", "AUDI", "NISSAN", "MAZDA",
+        "MITSUBISHI", "SUBARU", "CHEVROLET", "OPEL", "PEUGEOT",
+        "RENAULT", "VOLVO", "PORSCHE", "LAND ROVER", "JEEP",
+        "INFINITI", "ACURA", "CADILLAC", "GENESIS", "SKODA",
+        "SEAT", "FIAT", "LADA", "UAZ"
+    ]
     
     labels = response.get("labelAnnotations", [])
     texts = response.get("textAnnotations", [{}])
@@ -91,7 +90,7 @@ def extract_car_info(response):
     car_type = None
     for label in labels:
         desc = label.get("description", "").lower()
-        if desc in ["sedan", "suv", "hatchback", "coupe", "pickup truck", "van", "minivan", "wagon"]:
+        if desc in ["sedan", "suv", "hatchback", "coupe", "pickup truck", "van", "minivan"]:
             car_type = desc.title()
             break
     
