@@ -36,16 +36,21 @@ async def analyze_car_photo(photo_bytes):
                 data = await resp.json()
 
         response = data.get("responses", [{}])[0]
+        
+        texts = response.get("textAnnotations", [])
+        debug_text = texts[0].get("description", "NO TEXT") if texts else "NO TEXT"
+        print(f"DEBUG Vision text: {debug_text[:300]}")
+        
         car_number = extract_plate(response)
-# debug - რა ტექსტი ამოიცნო
-texts = response.get("textAnnotations", [])
-debug_text = texts[0].get("description", "ტექსტი ვერ მოიძებნა") if texts else "ტექსტი ვერ მოიძებნა"
-print(f"DEBUG Vision text: {debug_text[:200]}")
-print(f"DEBUG car_number: {car_number}")
         car_info = extract_car_info(response)
+        
+        print(f"DEBUG car_number: {car_number}")
+        print(f"DEBUG car_info: {car_info}")
+        
         return car_number, car_info
 
     except Exception as e:
+        print(f"DEBUG Vision error: {e}")
         return None, None
 
 def extract_plate(response):
