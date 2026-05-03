@@ -8,6 +8,7 @@ from telegram.ext import (Application, CommandHandler, MessageHandler, filters,
 from data import DEFAULT_SERVICES, DEFAULT_EMPLOYEES, OIL_VISCOSITIES, REPORT_HOUR
 from sheets import (add_service_record, add_expense, add_debt,
                     get_daily_report, get_car_history, init_sheets)
+from vision import analyze_car_photo
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
  WAIT_EMPLOYEE, WAIT_PERCENT, WAIT_DEBT_CONFIRM, WAIT_DEBT_PAID,
  WAIT_EXPENSE_CAT, WAIT_EXPENSE_DESC, WAIT_EXPENSE_AMOUNT,
  WAIT_ADMIN_ACTION, WAIT_NEW_SERVICE_BLOCK, WAIT_NEW_SERVICE_NAME,
- WAIT_NEW_EMPLOYEE_NAME, WAIT_HISTORY_NUMBER) = range(20)
+ WAIT_NEW_EMPLOYEE_NAME, WAIT_HISTORY_NUMBER, WAIT_CONFIRM_NUMBER) = range(21)
 
 def check_user(update):
     return update.effective_user.id == ALLOWED_USER_ID
@@ -97,8 +98,35 @@ async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["photo_id"] = update.message.photo[-1].file_id
     context.user_data["mode"] = "service"
-    await update.message.reply_text("✅ ფოტო მივიღე!\n\n🚗 მანქანის ნომერი:", reply_markup=make_keyboard([], cancel=True))
-    return WAIT_CAR_NUMBER
+    await update.message.reply_text("⏳ ფოტოს ვამუშავებ...", reply_markup=ReplyKeyboardRemove())
+    photo_file = await update.message.photo[-1].get_file()
+    photo_bytes = await photo_file.download_as_bytearray()
+    car_number, car_info = await analyze_car_photo(photo_bytes)
+    if car_number:
+        context.user_data["car_number"] = car_number
+        msg = f"✅ ფოტო დამუშავდა!\n\n🔢 ნომერი: {car_number}\n"
+        if car_info:
+            msg += f"🚗 {car_info}\n"
+        msg += "\nსწორია?"
+        await update.message.reply_text(msg, reply_markup=make_keyboard(["✅ სწორია", "✏️ ხელით შევიყვანე"], cols=1))
+        return WAIT_CONFIRM_NUMBER
+    else:
+        await update.message.reply_text("🚗 ნომერი ვერ ამოვიცანი.\n\nხელით შეიყვანე:", reply_markup=make_keyboard([], cancel=True))
+        return WAIT_CAR_NUMBER
+
+async def got_confirm_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not check_user(update):
+        return
+    if update.message.text == "✅ სწორია":
+        services = load_services()
+        blocks = list(services.keys())
+        await update.message.reply_text("რომელი განყოფილება?", reply_markup=make_keyboard(blocks, cols=1))
+        return WAIT_BLOCK
+    elif update.message.text == "✏️ ხელით შევიყვანე":
+        await update.message.reply_text("🚗 მანქანის ნომერი:", reply_markup=make_keyboard([], cancel=True))
+        return WAIT_CAR_NUMBER
+    elif update.message.text == "❌ გაუქმება":
+        return await cancel(update, context)
 
 async def got_car_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
@@ -114,6 +142,7 @@ async def got_car_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     blocks = list(services.keys())
     await update.message.reply_text("რომელი განყოფილება?", reply_markup=make_keyboard(blocks, cols=1))
     return WAIT_BLOCK
+
 async def got_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
@@ -463,6 +492,7 @@ def main():
     conv = ConversationHandler(
         entry_points=[MessageHandler(filters.PHOTO, photo_received), MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu)],
         states={
+            WAIT_CONFIRM_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_confirm_number)],
             WAIT_CAR_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_car_number)],
             WAIT_BLOCK: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_block)],
             WAIT_SERVICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_service)],
