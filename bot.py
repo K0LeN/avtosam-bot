@@ -92,7 +92,7 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚙️ ადმინ პანელი:", reply_markup=make_keyboard(actions, cols=1))
         return WAIT_ADMIN_ACTION
 
- async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
     context.user_data.clear()
