@@ -104,6 +104,8 @@ async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     car_number, car_info = await analyze_car_photo(photo_bytes)
     if car_number:
         context.user_data["car_number"] = car_number
+        if car_info:
+            context.user_data["car_info"] = car_info
         msg = f"✅ ფოტო დამუშავდა!\n\n🔢 ნომერი: {car_number}\n"
         if car_info:
             msg += f"🚗 {car_info}\n"
@@ -117,16 +119,22 @@ async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def got_confirm_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
-    if update.message.text == "✅ სწორია":
+    text = update.message.text
+    if text == "✅ სწორია":
         services = load_services()
         blocks = list(services.keys())
         await update.message.reply_text("რომელი განყოფილება?", reply_markup=make_keyboard(blocks, cols=1))
         return WAIT_BLOCK
-    elif update.message.text == "✏️ ხელით შევიყვანე":
+    elif text == "✏️ ხელით შევიყვანე":
         await update.message.reply_text("🚗 მანქანის ნომერი:", reply_markup=make_keyboard([], cancel=True))
         return WAIT_CAR_NUMBER
-    elif update.message.text == "❌ გაუქმება":
+    elif text == "❌ გაუქმება":
         return await cancel(update, context)
+    else:
+        services = load_services()
+        blocks = list(services.keys())
+        await update.message.reply_text("რომელი განყოფილება?", reply_markup=make_keyboard(blocks, cols=1))
+        return WAIT_BLOCK
 
 async def got_car_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
@@ -142,7 +150,6 @@ async def got_car_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     blocks = list(services.keys())
     await update.message.reply_text("რომელი განყოფილება?", reply_markup=make_keyboard(blocks, cols=1))
     return WAIT_BLOCK
-
 async def got_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_user(update):
         return
@@ -279,8 +286,14 @@ async def got_percent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         emp_share = round(price * percent / 100, 2)
         profit = round(price - emp_share, 2)
         details = d.get("details", "")
-        summary = (f"✅ დადასტურება:\n\n🚗 {d['car_number']}\n🔧 {d['service']}"
-                  + (f" ({details})" if details else "") + f"\n💰 {price} ₾\n👤 {d['employee']} — {percent}% = {emp_share} ₾\n📈 მოგება: {profit} ₾")
+        car_info = d.get("car_info", "")
+        summary = (f"✅ დადასტურება:\n\n🚗 {d['car_number']}")
+        if car_info:
+            summary += f" ({car_info})"
+        summary += f"\n🔧 {d['service']}"
+        if details:
+            summary += f" ({details})"
+        summary += f"\n💰 {price} ₾\n👤 {d['employee']} — {percent}% = {emp_share} ₾\n📈 მოგება: {profit} ₾"
         await update.message.reply_text(summary, reply_markup=make_keyboard(["✅ დადასტურება", "❌ გაუქმება"], cols=2))
         return WAIT_DEBT_CONFIRM
     except ValueError:
@@ -490,7 +503,10 @@ def main():
         logger.error(f"Sheets init error: {e}")
     app = Application.builder().token(BOT_TOKEN).build()
     conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.PHOTO, photo_received), MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu)],
+        entry_points=[
+            MessageHandler(filters.PHOTO, photo_received),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu)
+        ],
         states={
             WAIT_CONFIRM_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_confirm_number)],
             WAIT_CAR_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_car_number)],
