@@ -15,7 +15,7 @@ async def analyze_car_photo(photo_bytes):
             "contents": [{
                 "parts": [
                     {
-                        "text": "Look at this car image. Extract the license plate number exactly as shown. Also identify the car brand and model if visible. Respond ONLY in this JSON format: {\"plate\": \"XX-123-XX\", \"brand\": \"BMW\", \"model\": \"5 Series\"}. If you cannot find the plate, use null for plate value."
+                        "text": "Look at this car image. Extract the license plate number exactly as shown. Also identify the car brand and model if visible. Respond ONLY in this JSON format with no extra text: {\"plate\": \"XX-123-XX\", \"brand\": \"BMW\", \"model\": \"5 Series\"}. If you cannot find the plate, use null."
                     },
                     {
                         "inline_data": {
@@ -27,7 +27,7 @@ async def analyze_car_photo(photo_bytes):
             }],
             "generationConfig": {
                 "temperature": 0.1,
-                "maxOutputTokens": 100
+                "maxOutputTokens": 200
             }
         }
         
@@ -35,15 +35,25 @@ async def analyze_car_photo(photo_bytes):
             async with session.post(url, json=payload) as resp:
                 data = await resp.json()
         
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        print(f"DEBUG Gemini response: {text}")
+        print(f"DEBUG full response: {json.dumps(data)[:500]}")
         
-        # JSON პასუხის დამუშავება
+        candidates = data.get("candidates", [])
+        if not candidates:
+            print(f"DEBUG no candidates, error: {data.get('error', 'unknown')}")
+            return None, None
+            
+        text = candidates[0]["content"]["parts"][0]["text"]
+        print(f"DEBUG Gemini text: {text}")
+        
         text = text.strip()
         if "```" in text:
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
+            parts = text.split("```")
+            for part in parts:
+                if "{" in part:
+                    text = part
+                    if text.startswith("json"):
+                        text = text[4:]
+                    break
         
         result = json.loads(text.strip())
         plate = result.get("plate")
@@ -61,4 +71,6 @@ async def analyze_car_photo(photo_bytes):
         
     except Exception as e:
         print(f"DEBUG Gemini error: {e}")
+        import traceback
+        print(f"DEBUG traceback: {traceback.format_exc()}")
         return None, None
