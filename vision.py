@@ -4,12 +4,10 @@ import base64
 import aiohttp
 
 async def analyze_car_photo(photo_bytes):
-    """ფოტოდან მანქანის ნომრისა და მარკის ამოცნობა"""
     try:
         creds_json = os.environ.get("GOOGLE_CREDENTIALS")
         creds_dict = json.loads(creds_json)
         
-        # Get access token
         import google.auth.transport.requests
         from google.oauth2.service_account import Credentials
         scopes = ["https://www.googleapis.com/auth/cloud-vision"]
@@ -18,10 +16,8 @@ async def analyze_car_photo(photo_bytes):
         creds.refresh(request)
         token = creds.token
 
-        # Encode image
         image_b64 = base64.b64encode(photo_bytes).decode("utf-8")
 
-        # Call Vision API
         url = "https://vision.googleapis.com/v1/images:annotate"
         payload = {
             "requests": [{
@@ -40,52 +36,49 @@ async def analyze_car_photo(photo_bytes):
                 data = await resp.json()
 
         response = data.get("responses", [{}])[0]
-
-        # Extract car number
         car_number = extract_plate(response)
-
-        # Extract car brand/model
         car_info = extract_car_info(response)
-
         return car_number, car_info
 
     except Exception as e:
         return None, None
 
 def extract_plate(response):
-    """ნომრის ამოცნობა ტექსტიდან"""
     import re
     texts = response.get("textAnnotations", [])
     if not texts:
         return None
     
-    full_text = texts[0].get("description", "") if texts else ""
-    lines = full_text.upper().replace("\n", " ").split()
+    all_text = " ".join(t.get("description", "") for t in texts)
+    tokens = re.findall(r'[A-Z0-9]{2,10}', all_text.upper())
     
-    # Georgian plates: XX-XXX-XX or similar
     patterns = [
+        r'^\d{4}[A-Z]{2}$',
+        r'^[A-Z]{2}\d{4}$',
+        r'^[A-Z]{2}\d{3}[A-Z]{2}$',
         r'^[A-Z]{2}-\d{3}-[A-Z]{2}$',
-        r'^[A-Z]{2}\d{3}[A-Z]{2}$', 
         r'^\d{2}[A-Z]{2}\d{3}$',
+        r'^\d{3}[A-Z]{2}\d{2}$',
+        r'^[A-Z]{2}\d{2}[A-Z]{2}$',
         r'^[A-Z0-9]{5,8}$',
     ]
     
-    for token in lines:
-        token = token.strip(".,!?()[]")
+    for token in tokens:
+        token = token.strip(".,!?()[]- ")
         for pattern in patterns:
             if re.match(pattern, token) and len(token) >= 5:
                 return token
     return None
 
 def extract_car_info(response):
-    """მარკა/მოდელის ამოცნობა"""
-    car_brands = ["BMW", "MERCEDES", "TOYOTA", "LEXUS", "HONDA", "HYUNDAI", 
+    car_brands = ["BMW", "MERCEDES", "TOYOTA", "LEXUS", "HONDA", "HYUNDAI",
                   "KIA", "FORD", "VOLKSWAGEN", "AUDI", "NISSAN", "MAZDA",
                   "MITSUBISHI", "SUBARU", "CHEVROLET", "OPEL", "PEUGEOT",
-                  "RENAULT", "VOLVO", "PORSCHE", "LAND ROVER", "JEEP"]
+                  "RENAULT", "VOLVO", "PORSCHE", "LAND ROVER", "JEEP",
+                  "INFINITI", "ACURA", "CADILLAC", "LINCOLN", "BUICK",
+                  "CHRYSLER", "DODGE", "TESLA", "RIVIAN", "GENESIS"]
     
     labels = response.get("labelAnnotations", [])
-    objects = response.get("localizedObjectAnnotations", [])
     texts = response.get("textAnnotations", [{}])
     full_text = texts[0].get("description", "").upper() if texts else ""
     
@@ -95,11 +88,10 @@ def extract_car_info(response):
             found_brand = brand
             break
     
-    # Check labels for car type
     car_type = None
     for label in labels:
         desc = label.get("description", "").lower()
-        if desc in ["sedan", "suv", "hatchback", "coupe", "pickup truck", "van", "minivan"]:
+        if desc in ["sedan", "suv", "hatchback", "coupe", "pickup truck", "van", "minivan", "wagon"]:
             car_type = desc.title()
             break
     
