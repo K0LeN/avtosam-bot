@@ -9,7 +9,7 @@ async def analyze_car_photo(photo_bytes):
         api_key = os.environ.get("GEMINI_API_KEY")
         image_b64 = base64.b64encode(photo_bytes).decode("utf-8")
         
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
         
         payload = {
             "contents": [{
