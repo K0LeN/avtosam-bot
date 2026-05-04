@@ -1,4 +1,5 @@
 import os, json, logging, uuid
+from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (Application, CommandHandler, MessageHandler, filters, 
                           ContextTypes, ConversationHandler, CallbackQueryHandler)
@@ -15,7 +16,24 @@ SUPER_ADMIN_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 (WAIT_CONFIRM_NUMBER, WAIT_CAR_NUMBER_MANUAL, WAIT_BLOCK, 
  WAIT_SERVICE, WAIT_PRICE, WAIT_EMPLOYEE, WAIT_PERCENT, WAIT_ADMIN_ACTION) = range(8)
 
-# --- დამხმარეები ---
+# --- CACHE სისტემა Google-ისთვის ---
+cache = {"data": None, "time": datetime.min}
+
+def get_report_safe():
+    """ზოგავს Google-ის ლიმიტს: კითხულობს ცხრილს მხოლოდ 5 წუთში ერთხელ"""
+    if datetime.now() - cache["time"] < timedelta(minutes=5):
+        return cache["data"]
+    
+    try:
+        data = get_daily_report()
+        cache["data"] = data
+        cache["time"] = datetime.now()
+        return data
+    except Exception as e:
+        logging.error(f"Google Error: {e}")
+        return cache["data"] if cache["data"] else "❌ მონაცემები ვერ ჩაიტვირთა"
+
+# --- USER MANAGEMENT ---
 def load_users():
     try:
         with open("users.json", "r") as f: return json.load(f)
@@ -34,7 +52,7 @@ def make_kb(opts, cols=2):
     rows.append(["❌ გაუქმება"])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
-# --- სტარტი ---
+# --- მენიუ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not is_staff(uid):
@@ -48,7 +66,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 მენიუ:", reply_markup=make_kb(opts, cols=2))
     return ConversationHandler.END
 
-# --- ჩაწერის ლოგიკა ---
+# --- სერვისის ჩაწერა ---
 async def start_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("გამოგზავნეთ მანქანის ფოტო ან ჩაწერეთ ნომერი ხელით:", reply_markup=make_kb([]))
     return WAIT_CAR_NUMBER_MANUAL
@@ -96,11 +114,12 @@ async def got_employee(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("აირჩიეთ პროცენტი:", reply_markup=make_kb(["20","25","30","40","50"]))
         return WAIT_PERCENT
     else:
+        # თანამშრომლის მოთხოვნა
         req_id = str(uuid.uuid4())[:8]
         if "pending" not in context.bot_data: context.bot_data["pending"] = {}
         context.bot_data["pending"][req_id] = context.user_data.copy()
-        msg = f"🔔 **დასასტურებელია!**\n🚗 {context.user_data['car_number']} | 💰 {context.user_data['price']}₾"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ პროცენტის არჩევა", callback_data=f"ap_{req_id}")]])
+        msg = f"🔔 **ახალი სერვისი!**\n🚗 {context.user_data['car_number']} | 💰 {context.user_data['price']}₾\n👷 {context.user_data['employee']}"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ პროცენტის მინიჭება", callback_data=f"ap_{req_id}")]])
         await context.bot.send_message(chat_id=SUPER_ADMIN_ID, text=msg, reply_markup=kb)
         await update.message.reply_text("✅ გაიგზავნა ადმინთან!", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
@@ -112,30 +131,33 @@ async def admin_approve_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     if req_id in context.bot_data.get("pending", {}):
         context.user_data.update(context.bot_data["pending"][req_id])
         context.user_data["req_id"] = req_id
-        await query.message.reply_text(f"მიუთითეთ პროცენტი ({context.user_data['car_number']}):", reply_markup=make_kb(["20","25","30","40","50"]))
+        await query.message.reply_text(f"რა პროცენტი მივცეთ {context.user_data['car_number']}-ს?", reply_markup=make_kb(["20","25","30","40","50"]))
         return WAIT_PERCENT
-    await query.message.reply_text("❌ მოთხოვნა აღარ არსებობს.")
+    await query.message.reply_text("❌ მოთხოვნა ვადაგასულია.")
 
 async def final_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    percent = float(update.message.text)
-    d = context.user_data
-    add_service_record(d["block"], d["car_number"], d["service"], "", d["price"], d["employee"], percent)
-    if "req_id" in d: del context.bot_data["pending"][d["req_id"]]
-    await update.message.reply_text("✅ ჩაიწერა!")
+    try:
+        percent = float(update.message.text)
+        d = context.user_data
+        add_service_record(d["block"], d["car_number"], d["service"], "", d["price"], d["employee"], percent)
+        if "req_id" in d: del context.bot_data["pending"][d["req_id"]]
+        cache["time"] = datetime.min # ვაიძულებთ რეპორტის განახლებას მომდევნო ნახვაზე
+        await update.message.reply_text("✅ ჩაწერილია!")
+    except: await update.message.reply_text("შეცდომაა.")
     return await start(update, context)
 
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
-    await update.message.reply_text("⚙️ ადმინ პანელი: ჩაწერეთ ახალი თანამშრომლის ID:", reply_markup=make_kb([]))
+# --- ადმინ პანელი ---
+async def admin_panel_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⚙️ ჩაწერეთ ახალი თანამშრომლის ID (ციფრები):", reply_markup=make_kb([]))
     return WAIT_ADMIN_ACTION
 
-async def add_staff_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def save_new_staff(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         new_id = int(update.message.text)
         u = load_users()
         if new_id not in u["staff"]: u["staff"].append(new_id); save_users(u)
         await update.message.reply_text(f"✅ ID {new_id} დამატებულია!")
-    except: await update.message.reply_text("შეცდომაა.")
+    except: await update.message.reply_text("❌ ჩაწერეთ მხოლოდ ციფრები.")
     return await start(update, context)
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -143,7 +165,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("გაუქმდა.", reply_markup=ReplyKeyboardRemove())
     return await start(update, context)
 
-# --- MAIN ---
+# --- ძირითადი ---
 def main():
     init_sheets()
     app = Application.builder().token(BOT_TOKEN).build()
@@ -152,8 +174,8 @@ def main():
         entry_points=[
             MessageHandler(filters.Regex("^📸 სერვისის ჩაწერა$"), start_service),
             MessageHandler(filters.PHOTO, handle_photo),
-            MessageHandler(filters.Regex("^📊 დღის რეპორტი$"), lambda u, c: u.message.reply_text(str(get_daily_report()))),
-            MessageHandler(filters.Regex("^⚙️ ადმინ პანელი$"), admin_panel),
+            MessageHandler(filters.Regex("^📊 დღის რეპორტი$"), lambda u, c: u.message.reply_text(str(get_report_safe()))),
+            MessageHandler(filters.Regex("^⚙️ ადმინ პანელი$"), admin_panel_start),
             CallbackQueryHandler(admin_approve_click, pattern="^ap_")
         ],
         states={
@@ -164,7 +186,7 @@ def main():
             WAIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_price)],
             WAIT_EMPLOYEE: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_employee)],
             WAIT_PERCENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, final_save)],
-            WAIT_ADMIN_ACTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_staff_id)],
+            WAIT_ADMIN_ACTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_new_staff)],
         },
         fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex("^❌ გაუქმება$"), cancel)],
         allow_reentry=True
@@ -173,6 +195,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(admin_approve_click, pattern="^ap_"))
+    
     app.run_polling()
 
 if __name__ == "__main__":
