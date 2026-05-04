@@ -7,33 +7,32 @@ from data import DEFAULT_SERVICES, DEFAULT_EMPLOYEES
 from sheets import add_service_record, get_daily_report, init_sheets
 from vision import analyze_car_photo
 
+# ლოგირება შეცდომების მონიტორინგისთვის
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 SUPER_ADMIN_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 
-# სტეიტები
+# კონსტანტები საუბრის ეტაპებისთვის
 (WAIT_CONFIRM_NUMBER, WAIT_CAR_NUMBER_MANUAL, WAIT_BLOCK, 
  WAIT_SERVICE, WAIT_PRICE, WAIT_EMPLOYEE, WAIT_PERCENT, WAIT_ADMIN_ACTION) = range(8)
 
-# --- CACHE სისტემა Google-ისთვის ---
+# --- 🚀 GOOGLE API-ს დაზოგვა (CACHE) ---
 cache = {"data": None, "time": datetime.min}
 
 def get_report_safe():
-    """ზოგავს Google-ის ლიმიტს: კითხულობს ცხრილს მხოლოდ 5 წუთში ერთხელ"""
     if datetime.now() - cache["time"] < timedelta(minutes=5):
         return cache["data"]
-    
     try:
         data = get_daily_report()
         cache["data"] = data
         cache["time"] = datetime.now()
         return data
     except Exception as e:
-        logging.error(f"Google Error: {e}")
-        return cache["data"] if cache["data"] else "❌ მონაცემები ვერ ჩაიტვირთა"
+        logging.error(f"Google API Error: {e}")
+        return cache["data"] if cache["data"] else "❌ მონაცემები დროებით მიუწვდომელია"
 
-# --- USER MANAGEMENT ---
+# --- 👥 მომხმარებლების მართვა ---
 def load_users():
     try:
         with open("users.json", "r") as f: return json.load(f)
@@ -52,34 +51,34 @@ def make_kb(opts, cols=2):
     rows.append(["❌ გაუქმება"])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
-# --- მენიუ ---
+# --- 🏠 მთავარი მენიუ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not is_staff(uid):
-        await update.message.reply_text(f"⛔ წვდომა არ გაქვთ. ID: {uid}")
+        await update.message.reply_text(f"⛔ წვდომა არ გაქვთ. თქვენი ID: {uid}")
         return ConversationHandler.END
     
     opts = ["📸 სერვისის ჩაწერა"]
     if is_admin(uid):
         opts.extend(["📊 დღის რეპორტი", "⚙️ ადმინ პანელი"])
     
-    await update.message.reply_text("👋 მენიუ:", reply_markup=make_kb(opts, cols=2))
+    await update.message.reply_text("👋 აირჩიეთ მოქმედება:", reply_markup=make_kb(opts, cols=2))
     return ConversationHandler.END
 
-# --- სერვისის ჩაწერა ---
+# --- 📸 სერვისის ჩაწერის პროცესი ---
 async def start_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("გამოგზავნეთ მანქანის ფოტო ან ჩაწერეთ ნომერი ხელით:", reply_markup=make_kb([]))
     return WAIT_CAR_NUMBER_MANUAL
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ ვამუშავებ...")
+    await update.message.reply_text("⏳ ვამუშავებ ფოტოს...")
     photo = await update.message.photo[-1].get_file()
     num, info = await analyze_car_photo(await photo.download_as_bytearray())
     if num:
         context.user_data["car_number"] = num
         await update.message.reply_text(f"✅ ნომერი: {num}\nსწორია?", reply_markup=make_kb(["✅ სწორია", "✏️ შეცვლა"]))
         return WAIT_CONFIRM_NUMBER
-    await update.message.reply_text("🔢 ვერ ამოვიცანი. ჩაწერეთ ხელით:")
+    await update.message.reply_text("🔢 ნომერი ვერ ამოვიცანი. ჩაწერეთ ხელით:")
     return WAIT_CAR_NUMBER_MANUAL
 
 async def got_car_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -92,80 +91,110 @@ async def got_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     block = update.message.text
     if block not in DEFAULT_SERVICES: return WAIT_BLOCK
     context.user_data["block"] = block
-    await update.message.reply_text("სერვისი:", reply_markup=make_kb(list(DEFAULT_SERVICES[block].keys())))
+    await update.message.reply_text("აირჩიეთ სერვისი:", reply_markup=make_kb(list(DEFAULT_SERVICES[block].keys())))
     return WAIT_SERVICE
 
 async def got_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["service"] = update.message.text
-    await update.message.reply_text("შეიყვანეთ ფასი:", reply_markup=make_kb([]))
-    return WAIT_PRICE
+    service_name = update.message.text
+    context.user_data["service"] = service_name
+    block = context.user_data.get("block")
+
+    if block == "სამრეცხაო":
+        prices = [str(i) for i in range(5, 105, 5)]
+        await update.message.reply_text("🧼 აირჩიეთ ფასი (სამრეცხაო):", reply_markup=make_kb(prices, cols=4))
+        return WAIT_PRICE
+    else:
+        await update.message.reply_text(f"🛠 {service_name}-სთვის ჩაწერეთ ფასი ხელით:", reply_markup=make_kb([]))
+        return WAIT_PRICE
 
 async def got_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data["price"] = float(update.message.text)
-        await update.message.reply_text("შემსრულებელი:", reply_markup=make_kb(DEFAULT_EMPLOYEES))
+        await update.message.reply_text("ვინ შეასრულა?", reply_markup=make_kb(DEFAULT_EMPLOYEES))
         return WAIT_EMPLOYEE
-    except: return WAIT_PRICE
+    except:
+        await update.message.reply_text("⚠️ გთხოვთ შეიყვანოთ სწორი ციფრი!")
+        return WAIT_PRICE
 
 async def got_employee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["employee"] = update.message.text
     uid = update.effective_user.id
+    
     if is_admin(uid):
-        await update.message.reply_text("აირჩიეთ პროცენტი:", reply_markup=make_kb(["20","25","30","40","50"]))
+        await update.message.reply_text("მიუთითეთ პროცენტი:", reply_markup=make_kb(["20","25","30","40","50"]))
         return WAIT_PERCENT
     else:
-        # თანამშრომლის მოთხოვნა
+        # თანამშრომლის მოთხოვნა იგზავნება ადმინთან
         req_id = str(uuid.uuid4())[:8]
         if "pending" not in context.bot_data: context.bot_data["pending"] = {}
         context.bot_data["pending"][req_id] = context.user_data.copy()
-        msg = f"🔔 **ახალი სერვისი!**\n🚗 {context.user_data['car_number']} | 💰 {context.user_data['price']}₾\n👷 {context.user_data['employee']}"
+        
+        msg = (f"🔔 **ახალი სერვისი დასადასტურებლად!**\n"
+               f"🚗 ნომერი: {context.user_data['car_number']}\n"
+               f"🔧 სერვისი: {context.user_data['service']}\n"
+               f"💰 ფასი: {context.user_data['price']}₾\n"
+               f"👷 შემსრულებელი: {context.user_data['employee']}")
+        
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ პროცენტის მინიჭება", callback_data=f"ap_{req_id}")]])
         await context.bot.send_message(chat_id=SUPER_ADMIN_ID, text=msg, reply_markup=kb)
-        await update.message.reply_text("✅ გაიგზავნა ადმინთან!", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("✅ გაიგზავნა ადმინთან დასადასტურებლად!", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
 
+# --- 👑 ადმინის დადასტურება ---
 async def admin_approve_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     req_id = query.data.replace("ap_", "")
     await query.answer()
+    
     if req_id in context.bot_data.get("pending", {}):
         context.user_data.update(context.bot_data["pending"][req_id])
         context.user_data["req_id"] = req_id
-        await query.message.reply_text(f"რა პროცენტი მივცეთ {context.user_data['car_number']}-ს?", reply_markup=make_kb(["20","25","30","40","50"]))
+        await query.message.reply_text(f"რა პროცენტი მივცეთ {context.user_data['car_number']}-ს?", 
+                                       reply_markup=make_kb(["20","25","30","40","50"]))
         return WAIT_PERCENT
-    await query.message.reply_text("❌ მოთხოვნა ვადაგასულია.")
+    else:
+        await query.message.reply_text("❌ ეს მოთხოვნა ვადაგასულია ან უკვე დამუშავდა.")
 
 async def final_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         percent = float(update.message.text)
         d = context.user_data
         add_service_record(d["block"], d["car_number"], d["service"], "", d["price"], d["employee"], percent)
-        if "req_id" in d: del context.bot_data["pending"][d["req_id"]]
-        cache["time"] = datetime.min # ვაიძულებთ რეპორტის განახლებას მომდევნო ნახვაზე
-        await update.message.reply_text("✅ ჩაწერილია!")
-    except: await update.message.reply_text("შეცდომაა.")
+        
+        if "req_id" in d:
+            del context.bot_data["pending"][d["req_id"]]
+        
+        cache["time"] = datetime.min # ვაახლებთ რეპორტს
+        await update.message.reply_text("✅ მონაცემები წარმატებით აისახა ცხრილში!")
+    except:
+        await update.message.reply_text("⚠️ მოხდა შეცდომა ჩაწერისას.")
+    
     return await start(update, context)
 
-# --- ადმინ პანელი ---
+# --- ⚙️ ადმინ პანელი ---
 async def admin_panel_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⚙️ ჩაწერეთ ახალი თანამშრომლის ID (ციფრები):", reply_markup=make_kb([]))
+    if not is_admin(update.effective_user.id): return
+    await update.message.reply_text("⚙️ ჩაწერეთ ახალი თანამშრომლის Telegram ID:", reply_markup=make_kb([]))
     return WAIT_ADMIN_ACTION
 
 async def save_new_staff(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         new_id = int(update.message.text)
         u = load_users()
-        if new_id not in u["staff"]: u["staff"].append(new_id); save_users(u)
-        await update.message.reply_text(f"✅ ID {new_id} დამატებულია!")
-    except: await update.message.reply_text("❌ ჩაწერეთ მხოლოდ ციფრები.")
+        if new_id not in u["staff"]:
+            u["staff"].append(new_id)
+            save_users(u)
+        await update.message.reply_text(f"✅ ID {new_id} წარმატებით დაემატა თანამშრომლებში!")
+    except:
+        await update.message.reply_text("❌ გთხოვთ შეიყვანოთ მხოლოდ ციფრები.")
     return await start(update, context)
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text("გაუქმდა.", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("❌ მოქმედება გაუქმდა.", reply_markup=ReplyKeyboardRemove())
     return await start(update, context)
 
-# --- ძირითადი ---
+# --- 🏗 ძირითადი ფუნქცია ---
 def main():
     init_sheets()
     app = Application.builder().token(BOT_TOKEN).build()
@@ -179,7 +208,8 @@ def main():
             CallbackQueryHandler(admin_approve_click, pattern="^ap_")
         ],
         states={
-            WAIT_CONFIRM_NUMBER: [MessageHandler(filters.Regex("^✅ სწორია$"), got_car_number), MessageHandler(filters.Regex("^✏️ შეცვლა$"), lambda u,c: WAIT_CAR_NUMBER_MANUAL)],
+            WAIT_CONFIRM_NUMBER: [MessageHandler(filters.Regex("^✅ სწორია$"), got_car_number), 
+                                  MessageHandler(filters.Regex("^✏️ შეცვლა$"), lambda u,c: WAIT_CAR_NUMBER_MANUAL)],
             WAIT_CAR_NUMBER_MANUAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_car_number)],
             WAIT_BLOCK: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_block)],
             WAIT_SERVICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_service)],
