@@ -82,8 +82,23 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAIT_CAR_NUMBER_MANUAL
 
 async def got_car_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "❌ გაუქმება": return await cancel(update, context)
-    context.user_data["car_number"] = update.message.text.upper()
+    text = update.message.text
+    
+    if text == "❌ გაუქმება": 
+        return await cancel(update, context)
+    
+    # თუ მომხმარებელმა დააჭირა "✅ სწორია", ნომერი უკვე შენახულია ფოტოს დამუშავებისას
+    # ამიტომ ხელახლა აღარ უნდა გადავაწეროთ ტექსტი "✅ სწორია"
+    if text == "✅ სწორია":
+        # თუ რაღაც მიზეზით ნომერი არ არის შენახული (იშვიათი შემთხვევა)
+        if "car_number" not in context.user_data:
+            await update.message.reply_text("შეცდომა! გთხოვთ ნომერი ჩაწეროთ ხელით:")
+            return WAIT_CAR_NUMBER_MANUAL
+    else:
+        # თუ მომხმარებელმა ხელით ჩაწერა ნომერი (ან "✏️ შეცვლა" დააჭირა და მერე ჩაწერა)
+        context.user_data["car_number"] = text.upper()
+
+    # შემდეგ ეტაპზე გადასვლა
     await update.message.reply_text("აირჩიეთ განყოფილება:", reply_markup=make_kb(list(DEFAULT_SERVICES.keys())))
     return WAIT_BLOCK
 
